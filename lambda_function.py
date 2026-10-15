@@ -1,10 +1,18 @@
 import os
+import sys
 import json
 import uuid
 import base64
 import logging
 from pathlib import Path
 from typing import Dict, Any, List
+
+# Ensure cv2 is available (uses lightweight shim if opencv binary was omitted)
+try:
+    import cv2
+except ImportError:
+    from src import cv2_shim
+    sys.modules["cv2"] = cv2_shim
 
 from src.config import AppConfig, setup_logging
 from src.s3_service import S3Service

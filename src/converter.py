@@ -1,8 +1,19 @@
 import os
 import io
+import sys
 import logging
 from typing import Optional, Tuple
 from pathlib import Path
+
+# Ensure cv2 is available (uses lightweight shim if opencv binary was omitted)
+try:
+    import cv2
+except ImportError:
+    try:
+        from src import cv2_shim
+        sys.modules["cv2"] = cv2_shim
+    except ImportError:
+        pass
 
 logger = logging.getLogger(__name__)
 

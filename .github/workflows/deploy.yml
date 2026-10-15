@@ -37,7 +37,7 @@ jobs:
       - name: Prepare & Slim Lambda Package
         run: |
           mkdir -p package
-          echo "Installing dependencies without boto3 (boto3 is built-in to Lambda runtime)..."
+          echo "Installing dependencies..."
           
           python -m pip install \
             --target ./package \
@@ -48,14 +48,35 @@ jobs:
           cp -r src ./package/
           cp lambda_function.py ./package/
 
-          echo "Stripping shared library (.so) symbols to save ~100MB+..."
+          echo "Replacing bulky 120MB opencv-python-headless binary with cv2 compatibility shim..."
+          rm -rf ./package/cv2* ./package/opencv* 2>/dev/null || true
+          mkdir -p ./package/cv2
+          cp src/cv2_shim.py ./package/cv2/__init__.py
+
+          echo "Stripping shared library (.so) symbols to save space..."
           find ./package -type f -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true
 
           echo "Removing redundant libraries and non-runtime files..."
-          # Remove boto3/botocore/s3transfer/urllib3 if pulled in as dependencies (Lambda runtime provides them)
+          # Remove boto3/botocore/s3transfer/urllib3 (provided natively by AWS Lambda runtime)
           rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/urllib3* 2>/dev/null || true
 
-          # Remove tests, docs, build files, and unused metadata
+          # Remove fire & termcolor (CLI tools not needed for Lambda execution)
+          rm -rf ./package/fire* ./package/termcolor* 2>/dev/null || true
+
+          # Remove PyMuPDF C/C++ development headers
+          rm -rf ./package/pymupdf/mupdf-devel 2>/dev/null || true
+
+          # Remove non-essential submodules from fontTools
+          rm -rf ./package/fontTools/varLib ./package/fontTools/feaLib ./package/fontTools/cffLib \
+                 ./package/fontTools/voltLib ./package/fontTools/designspaceLib ./package/fontTools/svgLib \
+                 ./package/fontTools/colorLib ./package/fontTools/ufoLib ./package/fontTools/t1Lib \
+                 ./package/fontTools/pens 2>/dev/null || true
+
+          # Remove non-essential submodules from numpy
+          rm -rf ./package/numpy/f2py ./package/numpy/random ./package/numpy/polynomial \
+                 ./package/numpy/doc ./package/numpy/tests ./package/numpy/testing 2>/dev/null || true
+
+          # Remove test directories, caches, documentation, and build metadata
           find ./package -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
           find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
           find ./package -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
@@ -69,13 +90,6 @@ jobs:
           find ./package -type f -name "*.h" -delete 2>/dev/null || true
           find ./package -type f -name "*.hpp" -delete 2>/dev/null || true
           find ./package -type f -name "*.exe" -delete 2>/dev/null || true
-
-          # Remove non-essential bulky files from cv2 and fontTools
-          rm -rf ./package/cv2/data 2>/dev/null || true
-          rm -rf ./package/numpy/doc 2>/dev/null || true
-          rm -rf ./package/numpy/tests 2>/dev/null || true
-          rm -rf ./package/fontTools/varLib 2>/dev/null || true
-          rm -rf ./package/fontTools/feaLib 2>/dev/null || true
 
           # Calculate and verify unzipped package size
           UNZIPPED_KB=$(du -sk ./package | cut -f1)
