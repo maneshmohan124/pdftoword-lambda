@@ -34,33 +34,62 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
-      - name: Prepare Lambda Package Directory
+      - name: Prepare & Slim Lambda Package
         run: |
           mkdir -p package
-          echo "Installing dependencies..."
+          echo "Installing dependencies without boto3 (boto3 is built-in to Lambda runtime)..."
           
-          # Install dependencies targeted for Lambda Linux architecture
           python -m pip install \
             --target ./package \
-            --platform manylinux2014_x86_64 \
-            --implementation cp \
-            --python-version 3.14 \
-            --only-binary=:all: \
-            -r requirements.txt || \
-          python -m pip install \
-            --target ./package \
+            --no-user \
             -r requirements.txt
 
           # Copy application code into package
           cp -r src ./package/
           cp lambda_function.py ./package/
 
-          # Clean up unnecessary files to minimize package size
+          echo "Stripping shared library (.so) symbols to save ~100MB+..."
+          find ./package -type f -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true
+
+          echo "Removing redundant libraries and non-runtime files..."
+          # Remove boto3/botocore/s3transfer/urllib3 if pulled in as dependencies (Lambda runtime provides them)
+          rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/urllib3* 2>/dev/null || true
+
+          # Remove tests, docs, build files, and unused metadata
           find ./package -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type d -name "testing" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
           find ./package -type f -name "*.pyc" -delete 2>/dev/null || true
           find ./package -type f -name "*.pyo" -delete 2>/dev/null || true
-          find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
-          find ./package -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type f -name "*.pyd" -delete 2>/dev/null || true
+          find ./package -type f -name "*.c" -delete 2>/dev/null || true
+          find ./package -type f -name "*.h" -delete 2>/dev/null || true
+          find ./package -type f -name "*.hpp" -delete 2>/dev/null || true
+          find ./package -type f -name "*.exe" -delete 2>/dev/null || true
+
+          # Remove non-essential bulky files from cv2 and fontTools
+          rm -rf ./package/cv2/data 2>/dev/null || true
+          rm -rf ./package/numpy/doc 2>/dev/null || true
+          rm -rf ./package/numpy/tests 2>/dev/null || true
+          rm -rf ./package/fontTools/varLib 2>/dev/null || true
+          rm -rf ./package/fontTools/feaLib 2>/dev/null || true
+
+          # Calculate and verify unzipped package size
+          UNZIPPED_KB=$(du -sk ./package | cut -f1)
+          UNZIPPED_BYTES=$((UNZIPPED_KB * 1024))
+          UNZIPPED_MB=$((UNZIPPED_BYTES / 1024 / 1024))
+          echo "============================================="
+          echo "Unzipped package size: $UNZIPPED_BYTES bytes (~$UNZIPPED_MB MB)"
+          echo "AWS Lambda Limit: 262,144,000 bytes (250 MB)"
+          echo "============================================="
+
+          if [ "$UNZIPPED_BYTES" -ge 262144000 ]; then
+            echo "ERROR: Unzipped size ($UNZIPPED_BYTES bytes) exceeds AWS Lambda 250MB limit!"
+            exit 1
+          fi
 
       - name: Create Zip Package
         run: |
@@ -68,8 +97,8 @@ jobs:
           zip -r9 ../deployment-package.zip .
           cd ..
           PACKAGE_SIZE=$(du -h deployment-package.zip | cut -f1)
-          echo "Package size: $PACKAGE_SIZE"
-          echo "PACKAGE_SIZE_BYTES=$(stat -c%s deployment-package.zip)" >> $GITHUB_ENV
+          echo "Zipped package size: $PACKAGE_SIZE"
+          echo "PACKAGE_SIZE_BYTES=$(wc -c < deployment-package.zip | tr -d ' ')" >> $GITHUB_ENV
 
       - name: Deploy Code to AWS Lambda
         env:
@@ -82,11 +111,11 @@ jobs:
             exit 1
           fi
 
-          echo "Deploying to Lambda function: $LAMBDA_NAME..."
+          echo "Deploying to Lambda function: $LAMBDA_NAME in $AWS_REGION..."
 
-          # If deployment package is over 50MB (direct upload limit) and deploy bucket is configured, upload via S3
+          # Upload via S3 if deployment package is over 50MB (direct upload limit)
           if [ "$PACKAGE_SIZE_BYTES" -gt 52428800 ] && [ -n "$DEPLOY_BUCKET" ]; then
-            echo "Package exceeds 50MB direct upload limit. Uploading via S3 bucket: $DEPLOY_BUCKET"
+            echo "Package exceeds 50MB direct upload limit ($PACKAGE_SIZE_BYTES bytes). Uploading via S3: $DEPLOY_BUCKET..."
             S3_KEY="lambda-deployments/${LAMBDA_NAME}-${{ github.sha }}.zip"
             aws s3 cp deployment-package.zip "s3://${DEPLOY_BUCKET}/${S3_KEY}"
             aws lambda update-function-code \
@@ -94,7 +123,7 @@ jobs:
               --s3-bucket "$DEPLOY_BUCKET" \
               --s3-key "$S3_KEY"
           else
-            echo "Uploading deployment package directly to Lambda..."
+            echo "Uploading deployment package directly to Lambda ($PACKAGE_SIZE_BYTES bytes)..."
             aws lambda update-function-code \
               --function-name "$LAMBDA_NAME" \
               --zip-file fileb://deployment-package.zip
