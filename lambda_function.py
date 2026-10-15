@@ -53,8 +53,10 @@ def handle_s3_event(event: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         source_key = s3_service.decode_key(raw_key)
 
-        # Infinite loop prevention: don't process files already in the output directory
-        if output_prefix and source_key.startswith(output_prefix):
+        dest_bucket = config.output_s3_bucket if config.output_s3_bucket else source_bucket
+
+        # Infinite loop prevention: don't process files already in the output directory if using same bucket
+        if dest_bucket == source_bucket and output_prefix and source_key.startswith(output_prefix):
             logger.info(f"Skipping key {source_key} as it is already in the output prefix '{output_prefix}'.")
             continue
 
@@ -63,7 +65,6 @@ def handle_s3_event(event: Dict[str, Any]) -> List[Dict[str, Any]]:
             logger.info(f"Skipping key {source_key}: not a PDF file.")
             continue
 
-        dest_bucket = config.output_s3_bucket if config.output_s3_bucket else source_bucket
         dest_key = _determine_output_key(source_key, output_prefix)
 
         job_id = str(uuid.uuid4())[:8]

@@ -58,7 +58,7 @@ def test_lambda_handler_ignores_converted_prefix(mock_s3_service, mock_converter
         "Records": [
             {
                 "s3": {
-                    "bucket": {"name": "test-upload-bucket"},
+                    "bucket": {"name": lambda_function.config.output_s3_bucket},
                     "object": {"key": "converted/document.pdf"}
                 }
             }

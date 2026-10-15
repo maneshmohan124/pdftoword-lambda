@@ -5,7 +5,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class AppConfig:
     """Application configuration loaded from environment variables."""
-    output_s3_bucket: str = os.getenv("OUTPUT_S3_BUCKET", "")
+    output_s3_bucket: str = os.getenv("OUTPUT_S3_BUCKET", "qtreeclassreplica")
     output_prefix: str = os.getenv("OUTPUT_PREFIX", "converted/").strip("/")
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
     aws_region: str = os.getenv("AWS_REGION", "us-east-1")

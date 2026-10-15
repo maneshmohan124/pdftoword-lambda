@@ -5,5 +5,5 @@
     "Content-Type": "application/json"
   },
   "isBase64Encoded": false,
-  "body": "{\"bucket\": \"my-pdf-upload-bucket\", \"key\": \"uploads/sample_document.pdf\"}"
+  "body": "{\"bucket\": \"qtree-lambda-bucket\", \"key\": \"sample_document.pdf\"}"
 }

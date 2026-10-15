@@ -73,11 +73,12 @@ jobs:
 
       - name: Deploy Code to AWS Lambda
         env:
-          LAMBDA_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME }}
-          DEPLOY_BUCKET: ${{ secrets.DEPLOYMENT_BUCKET }}
+          LAMBDA_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME || 'pdftoword' }}
+          DEPLOY_BUCKET: ${{ secrets.DEPLOYMENT_BUCKET || 'qtreeclassreplica' }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
         run: |
           if [ -z "$LAMBDA_NAME" ]; then
-            echo "ERROR: LAMBDA_FUNCTION_NAME secret is not set!"
+            echo "ERROR: Lambda function name is empty!"
             exit 1
           fi
 
