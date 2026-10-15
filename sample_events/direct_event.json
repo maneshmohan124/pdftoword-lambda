@@ -1,0 +1,4 @@
+{
+  "bucket": "my-pdf-upload-bucket",
+  "key": "uploads/sample_document.pdf"
+}

@@ -1,0 +1,104 @@
+name: Deploy Python Lambda to AWS
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment target / note'
+        required: false
+        default: 'manual-trigger'
+
+jobs:
+  deploy:
+    name: Build & Deploy Lambda Function
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Prepare Lambda Package Directory
+        run: |
+          mkdir -p package
+          echo "Installing dependencies..."
+          
+          # Install dependencies targeted for Lambda Linux architecture
+          python -m pip install \
+            --target ./package \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.14 \
+            --only-binary=:all: \
+            -r requirements.txt || \
+          python -m pip install \
+            --target ./package \
+            -r requirements.txt
+
+          # Copy application code into package
+          cp -r src ./package/
+          cp lambda_function.py ./package/
+
+          # Clean up unnecessary files to minimize package size
+          find ./package -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type f -name "*.pyc" -delete 2>/dev/null || true
+          find ./package -type f -name "*.pyo" -delete 2>/dev/null || true
+          find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+          find ./package -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Create Zip Package
+        run: |
+          cd package
+          zip -r9 ../deployment-package.zip .
+          cd ..
+          PACKAGE_SIZE=$(du -h deployment-package.zip | cut -f1)
+          echo "Package size: $PACKAGE_SIZE"
+          echo "PACKAGE_SIZE_BYTES=$(stat -c%s deployment-package.zip)" >> $GITHUB_ENV
+
+      - name: Deploy Code to AWS Lambda
+        env:
+          LAMBDA_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME }}
+          DEPLOY_BUCKET: ${{ secrets.DEPLOYMENT_BUCKET }}
+        run: |
+          if [ -z "$LAMBDA_NAME" ]; then
+            echo "ERROR: LAMBDA_FUNCTION_NAME secret is not set!"
+            exit 1
+          fi
+
+          echo "Deploying to Lambda function: $LAMBDA_NAME..."
+
+          # If deployment package is over 50MB (direct upload limit) and deploy bucket is configured, upload via S3
+          if [ "$PACKAGE_SIZE_BYTES" -gt 52428800 ] && [ -n "$DEPLOY_BUCKET" ]; then
+            echo "Package exceeds 50MB direct upload limit. Uploading via S3 bucket: $DEPLOY_BUCKET"
+            S3_KEY="lambda-deployments/${LAMBDA_NAME}-${{ github.sha }}.zip"
+            aws s3 cp deployment-package.zip "s3://${DEPLOY_BUCKET}/${S3_KEY}"
+            aws lambda update-function-code \
+              --function-name "$LAMBDA_NAME" \
+              --s3-bucket "$DEPLOY_BUCKET" \
+              --s3-key "$S3_KEY"
+          else
+            echo "Uploading deployment package directly to Lambda..."
+            aws lambda update-function-code \
+              --function-name "$LAMBDA_NAME" \
+              --zip-file fileb://deployment-package.zip
+          fi
+
+          echo "Waiting for function update to complete..."
+          aws lambda wait function-updated --function-name "$LAMBDA_NAME"
+          echo "Lambda deployment successful!"

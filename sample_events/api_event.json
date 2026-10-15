@@ -1,0 +1,9 @@
+{
+  "httpMethod": "POST",
+  "path": "/convert",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "isBase64Encoded": false,
+  "body": "{\"bucket\": \"my-pdf-upload-bucket\", \"key\": \"uploads/sample_document.pdf\"}"
+}
